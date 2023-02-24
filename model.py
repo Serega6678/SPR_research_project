@@ -39,11 +39,11 @@ class NoisyLinear(nn.Module):
     self.weight_epsilon.copy_(epsilon_out.ger(epsilon_in))
     self.bias_epsilon.copy_(epsilon_out)
 
-  def forward(self, input):
-    if self.training:
-      return F.linear(input, self.weight_mu + self.weight_sigma * self.weight_epsilon, self.bias_mu + self.bias_sigma * self.bias_epsilon)
-    else:
+  def forward(self, input, add_noise=True):
+    if not self.training or not add_noise:
       return F.linear(input, self.weight_mu, self.bias_mu)
+    else:
+      return F.linear(input, self.weight_mu + self.weight_sigma * self.weight_epsilon, self.bias_mu + self.bias_sigma * self.bias_epsilon)
 
 
 class DQN(nn.Module):
@@ -68,6 +68,7 @@ class DQN(nn.Module):
 
   def forward(self, x, log=False):
     x = self.convs(x)
+    y = x.clone()
     x = x.view(-1, self.conv_output_size)
     v = self.fc_z_v(F.relu(self.fc_h_v(x)))  # Value stream
     a = self.fc_z_a(F.relu(self.fc_h_a(x)))  # Advantage stream
@@ -77,9 +78,39 @@ class DQN(nn.Module):
       q = F.log_softmax(q, dim=2)  # Log probabilities with action over second dimension
     else:
       q = F.softmax(q, dim=2)  # Probabilities with action over second dimension
-    return q
+    return q, y
+
+  def encode(self, x):
+    return self.convs(x)
+
+  def decode(self, x):
+    return torch.concatenate([self.fc_h_v(x), self.fc_h_a(x)], dim=-1)
 
   def reset_noise(self):
     for name, module in self.named_children():
       if 'fc' in name:
         module.reset_noise()
+
+
+class TransitionModel(nn.Module):
+  def __init__(self, num_actions=6):
+    super().__init__()
+    self.num_actions = num_actions
+    self.model = nn.Sequential(
+      nn.Conv2d(64 + num_actions, 64, 3, padding=1),
+      nn.BatchNorm2d(64),
+      nn.ReLU(),
+      nn.Conv2d(64, 64, 3, padding=1),
+      nn.ReLU()
+    )
+
+  def forward(self, x, action):
+    batch_range = torch.arange(action.shape[0], device=action.device)
+    action_onehot = torch.zeros(action.shape[0],
+                                self.num_actions,
+                                x.shape[-2],
+                                x.shape[-1],
+                                device=action.device)
+    action_onehot[batch_range, action, :, :] = 1
+    stacked_image = torch.cat([x, action_onehot], 1)
+    return self.model(stacked_image)

@@ -5,6 +5,7 @@ import plotly
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
 import torch
+from tqdm import trange
 
 from env import Env
 
@@ -18,7 +19,7 @@ def test(args, T, dqn, val_mem, metrics, results_dir, evaluate=False):
 
   # Test performance over several episodes
   done = True
-  for _ in range(args.evaluation_episodes):
+  for _ in trange(args.evaluation_episodes):
     while True:
       if done:
         state, reward_sum, done = env.reset(), 0, False
