@@ -25,27 +25,17 @@ class DQN(nn.Module):
     self.fc_v = nn.Linear(args.hidden_size, self.atoms)
     self.fc_a = nn.Linear(args.hidden_size, self.action_space * self.atoms)
 
-    # super().__init__()
-    # self.relu = nn.ReLU()
-    # self.conv1 = nn.Conv2d(args.history_length, 32, 5, stride=5, padding=0)
-    # self.conv2 = nn.Conv2d(32, 64, 4, stride=2, padding=0)
-    # self.fc1 = nn.Linear(3136, hidden_size) 
-    # self.fc_v = nn.Linear(hidden_size, 1)
-    # self.fc_a = nn.Linear(hidden_size, action_size)
-    # # TODO: Distributional version
+  def forward(self, x, log=False):
 
-    # # Orthogonal weight initialisation
-    # for name, p in self.named_parameters():
-    #   if 'weight' in name:
-    #     init.orthogonal(p)
-    #   elif 'bias' in name:
-    #     init.constant(p, 0)
-
-  def forward(self, x):
     x = self.convs(x)
     x = x.view(-1, self.conv_output_size)
     x = F.relu(self.fc1(x))
     v = self.fc_v(x)
     a = self.fc_a(x)
     v, a = v.view(-1, 1, self.atoms), a.view(-1, self.action_space, self.atoms)
-    return  v + a - a.mean(1, keepdim=True) 
+    q = v + a - a.mean(1, keepdim=True)  # Combine streams
+    if log:  # Use log softmax for numerical stability
+      q = F.log_softmax(q, dim=2)  # Log probabilities with action over second dimension
+    else:
+      q = F.softmax(q, dim=2)  # Probabilities with action over second dimension
+    return q
