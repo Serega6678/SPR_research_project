@@ -46,8 +46,8 @@ class Agent():
     self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate, eps=args.adam_eps)
 
   # Resets noisy weights in all linear layers (of online net only)
-  def reset_noise(self):
-    self.online_net.reset_noise()
+  # def reset_noise(self):
+  #   self.online_net.reset_noise()
 
   # Acts based on single state (no batch)
   def act(self, state):
@@ -63,7 +63,7 @@ class Agent():
     idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
 
     # Calculate current state probabilities (online network noise already sampled)
-    log_ps = self.online_net(states, log=True)  # Log probabilities log p(s_t, ·; θonline)
+    log_ps = self.online_net(states) #, log=True)  # Log probabilities log p(s_t, ·; θonline)
     log_ps_a = log_ps[range(self.batch_size), actions]  # log p(s_t, a_t; θonline)
 
     with torch.no_grad():
@@ -71,7 +71,7 @@ class Agent():
       pns = self.online_net(next_states)  # Probabilities p(s_t+n, ·; θonline)
       dns = self.support.expand_as(pns) * pns  # Distribution d_t+n = (z, p(s_t+n, ·; θonline))
       argmax_indices_ns = dns.sum(2).argmax(1)  # Perform argmax action selection using online network: argmax_a[(z, p(s_t+n, a; θonline))]
-      self.target_net.reset_noise()  # Sample new target net noise
+      # self.target_net.reset_noise()  # Sample new target net noise
       pns = self.target_net(next_states)  # Probabilities p(s_t+n, ·; θtarget)
       pns_a = pns[range(self.batch_size), argmax_indices_ns]  # Double-Q probabilities p(s_t+n, argmax_a[(z, p(s_t+n, a; θonline))]; θtarget)
 
@@ -116,3 +116,68 @@ class Agent():
 
   def eval(self):
     self.online_net.eval()
+
+# import os
+# import random
+# import torch
+# from torch import nn, optim
+# from torch.autograd import Variable
+# from torch.nn import functional as F
+
+# # from memory import Transition
+# from model import DQN
+
+
+# class Agent():
+#   def __init__(self, args, env):
+#     self.action_size = env.action_space()
+#     self.batch_size = args.batch_size
+#     self.discount = args.discount
+#     self.norm_clip = args.norm_clip
+
+#     self.online_net = DQN(args.hidden_size, self.action_size)
+#     if args.model and os.path.isfile(args.model):
+#       self.online_net.load_state_dict(torch.load(args.model))
+#     self.online_net.train()
+
+#     self.target_net = DQN(args.hidden_size, self.action_size)
+#     self.update_target_net()
+#     self.target_net.eval()
+
+#     self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate)
+
+#   def act(self, state):
+#     with torch.no_grad():
+#       return (self.online_net(state.unsqueeze(0))).sum(2).argmax(1).item()
+#   def learn(self, mem):
+
+#     idxs, states, actions, rewards, next_states, nonterminals, weights = mem.sample(self.batch_size)
+
+#     Qs = self.online_net(states).gather(1, actions)  # Q(s_t, a_t; θpolicy)
+#     next_state_argmax_indices = self.online_net(next_states).max(1, keepdim=True)[1]  # Perform argmax action selection using policy network: argmax_a[Q(s_t+1, a; θpolicy)]
+#     Qns = Variable(torch.zeros(self.batch_size))  # Q(s_t+1, a) = 0 if s_t+1 is terminal
+#     Qns[nonterminals] = self.target_net(next_states).gather(1, next_state_argmax_indices)  # Q(s_t+1, argmax_a[Q(s_t+1, a; θpolicy)]; θtarget)
+#     Qns.volatile = False  # Remove volatile flag to prevent propagating it through loss
+#     target = rewards + (self.discount * Qns)  # Double-Q target: Y = r + γ.Q(s_t+1, argmax_a[Q(s_t+1, a; θpolicy)]; θtarget)
+
+#     loss = F.smooth_l1_loss(Qs, target)  # Huber loss on TD-error δ: δ = Y - Q(s_t, a_t)
+#     # TODO: TD-error clipping?
+#     self.online_net.zero_grad()
+#     loss.backward()
+#     nn.utils.clip_grad_norm(self.online_net.parameters(), self.norm_clip)  # Clamp gradients
+#     self.optimiser.step()
+
+#   def update_target_net(self):
+#     self.target_net.load_state_dict(self.online_net.state_dict())
+
+#   def save(self, path):
+#     torch.save(self.online_net.state_dict(), os.path.join(path, 'model.pth'))
+
+#   def evaluate_q(self, state):
+#     return self.online_net(state.unsqueeze(0)).max(1)[0].data[0]
+
+#   def train(self):
+#     self.online_net.train()
+
+#   def eval(self):
+#     self.online_net.eval()
