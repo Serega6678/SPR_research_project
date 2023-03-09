@@ -73,11 +73,13 @@ class SegmentTree():
     successor_choices = np.greater(values, left_children_values).astype(np.int32)  # Classify which values are in left or right branches
     successor_indices = children_indices[successor_choices, np.arange(indices.size)] # Use classification to index into the indices matrix
     successor_values = values - successor_choices * left_children_values  # Subtract the left branch values when searching in the right branch
+    # print(successor_indices)
     return self._retrieve(successor_indices, successor_values)
 
   # Searches for values in sum tree and returns values, data indices and tree indices
   def find(self, values):
     indices = self._retrieve(np.zeros(values.shape, dtype=np.int32), values)
+    print("im out!")
     data_index = indices - self.tree_start
     return (self.sum_tree[indices], data_index, indices)  # Return values, data indices, tree indices
 

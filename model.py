@@ -22,20 +22,13 @@ class DQN(nn.Module):
       self.conv_output_size = 576
     
     self.fc1 = nn.Linear(self.conv_output_size, args.hidden_size)
-    self.fc_v = nn.Linear(args.hidden_size, self.atoms)
-    self.fc_a = nn.Linear(args.hidden_size, self.action_space * self.atoms)
+    self.fc2 = nn.Linear(args.hidden_size, self.action_space)
 
   def forward(self, x, log=False):
 
     x = self.convs(x)
     x = x.view(-1, self.conv_output_size)
     x = F.relu(self.fc1(x))
-    v = self.fc_v(x)
-    a = self.fc_a(x)
-    v, a = v.view(-1, 1, self.atoms), a.view(-1, self.action_space, self.atoms)
-    q = v + a - a.mean(1, keepdim=True)  # Combine streams
-    if log:  # Use log softmax for numerical stability
-      q = F.log_softmax(q, dim=2)  # Log probabilities with action over second dimension
-    else:
-      q = F.softmax(q, dim=2)  # Probabilities with action over second dimension
-    return q
+    x = F.relu(self.fc2(x))
+    
+    return x

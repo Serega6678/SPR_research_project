@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import optim
 from torch.nn.utils import clip_grad_norm_
+import torch.nn as nn
 
 from model import DQN
 
@@ -12,15 +13,10 @@ from model import DQN
 class Agent():
   def __init__(self, args, env):
     self.action_space = env.action_space()
-    self.atoms = args.atoms
-    self.Vmin = args.V_min
-    self.Vmax = args.V_max
-    self.support = torch.linspace(args.V_min, args.V_max, self.atoms).to(device=args.device)  # Support (range) of z
-    self.delta_z = (args.V_max - args.V_min) / (self.atoms - 1)
     self.batch_size = args.batch_size
-    self.n = args.multi_step
     self.discount = args.discount
     self.norm_clip = args.norm_clip
+    self.lr = args.learning_rate
 
     self.online_net = DQN(args, self.action_space).to(device=args.device)
     if args.model:  # Load pretrained model if provided
@@ -37,22 +33,13 @@ class Agent():
 
     self.online_net.train()
 
-    self.target_net = DQN(args, self.action_space).to(device=args.device)
-    self.update_target_net()
-    self.target_net.train()
-    for param in self.target_net.parameters():
-      param.requires_grad = False
-
     self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate, eps=args.adam_eps)
-
-  # Resets noisy weights in all linear layers (of online net only)
-  # def reset_noise(self):
-  #   self.online_net.reset_noise()
 
   # Acts based on single state (no batch)
   def act(self, state):
     with torch.no_grad():
-      return (self.online_net(state.unsqueeze(0)) * self.support).sum(2).argmax(1).item()
+        q_values = self.online_net(state.unsqueeze(0))
+        return q_values.max(1)[1].item()
 
   # Acts with an ε-greedy policy (used for evaluation only)
   def act_e_greedy(self, state, epsilon=0.001):  # High ε can reduce evaluation scores drastically
@@ -60,48 +47,38 @@ class Agent():
 
   def learn(self, mem):
     # Sample transitions
-    idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
+    idxs, states, actions, rewards, next_states, nonterminals, weights = mem.sample(self.batch_size)
 
-    # Calculate current state probabilities (online network noise already sampled)
-    log_ps = self.online_net(states, log=True)  # Log probabilities log p(s_t, ·; θonline)
-    log_ps_a = log_ps[range(self.batch_size), actions]  # log p(s_t, a_t; θonline)
+    # Calculate current state-action values
+    q_values = self.online_net(states)
+    q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
 
     with torch.no_grad():
-      # Calculate nth next state probabilities
-      pns = self.online_net(next_states)  # Probabilities p(s_t+n, ·; θonline)
-      dns = self.support.expand_as(pns) * pns  # Distribution d_t+n = (z, p(s_t+n, ·; θonline))
-      argmax_indices_ns = dns.sum(2).argmax(1)  # Perform argmax action selection using online network: argmax_a[(z, p(s_t+n, a; θonline))]
-      # self.target_net.reset_noise()  # Sample new target net noise
-      pns = self.target_net(next_states)  # Probabilities p(s_t+n, ·; θtarget)
-      pns_a = pns[range(self.batch_size), argmax_indices_ns]  # Double-Q probabilities p(s_t+n, argmax_a[(z, p(s_t+n, a; θonline))]; θtarget)
 
-      # Compute Tz (Bellman operator T applied to z)
-      Tz = returns.unsqueeze(1) + nonterminals * (self.discount ** self.n) * self.support.unsqueeze(0)  # Tz = R^n + (γ^n)z (accounting for terminal states)
-      Tz = Tz.clamp(min=self.Vmin, max=self.Vmax)  # Clamp between supported values
-      # Compute L2 projection of Tz onto fixed support z
-      b = (Tz - self.Vmin) / self.delta_z  # b = (Tz - Vmin) / Δz
-      l, u = b.floor().to(torch.int64), b.ceil().to(torch.int64)
-      # Fix disappearing probability mass when l = b = u (b is int)
-      l[(u > 0) * (l == u)] -= 1
-      u[(l < (self.atoms - 1)) * (l == u)] += 1
+      # Q-learning: Q_new = Q(s, a) + α[R + γmax_a'Q(s', a') - Q(s, a)]
+      future_q_values = self.online_net(next_states).max(1)[1]
+      # Compute the target
+      new_q_values = q_values + self.lr*(rewards + (self.discount*future_q_values) - q_values)
+    
+    # Calculate the loss
+    loss = nn.MSELoss()(q_values, new_q_values)
 
-      # Distribute probability of Tz
-      m = states.new_zeros(self.batch_size, self.atoms)
-      offset = torch.linspace(0, ((self.batch_size - 1) * self.atoms), self.batch_size).unsqueeze(1).expand(self.batch_size, self.atoms).to(actions)
-      m.view(-1).index_add_(0, (l + offset).view(-1), (pns_a * (u.float() - b)).view(-1))  # m_l = m_l + p(s_t+n, a*)(u - b)
-      m.view(-1).index_add_(0, (u + offset).view(-1), (pns_a * (b - l.float())).view(-1))  # m_u = m_u + p(s_t+n, a*)(b - l)
-
-    loss = -torch.sum(m * log_ps_a, 1)  # Cross-entropy loss (minimises DKL(m||p(s_t, a_t)))
-    self.online_net.zero_grad()
-    (weights * loss).mean().backward()  # Backpropagate importance-weighted minibatch loss
-    clip_grad_norm_(self.online_net.parameters(), self.norm_clip)  # Clip gradients by L2 norm
+    # Optimize the model
+    self.optimiser.zero_grad()
+    loss.backward()
+    clip_grad_norm_(self.online_net.parameters(), self.norm_clip)
     self.optimiser.step()
 
-    mem.update_priorities(idxs, loss.detach().cpu().numpy())  # Update priorities of sampled transitions
+    # Update priorities in the replay buffer
+    mem.update_priorities(idxs, loss.detach().numpy())
 
-  def update_target_net(self):
-    self.target_net.load_state_dict(self.online_net.state_dict())
-
+    # Update the target network
+    # if mem.steps % self.target_update == 0:
+    #     self.update_target_net()
+  
+  # def update_target_net(self):
+  #   self.target_net.load_state_dict(self.online_net.state_dict())
+      
   # Save model parameters on current device (don't move model between devices)
   def save(self, path, name='model.pth'):
     torch.save(self.online_net.state_dict(), os.path.join(path, name))
@@ -116,68 +93,3 @@ class Agent():
 
   def eval(self):
     self.online_net.eval()
-
-# import os
-# import random
-# import torch
-# from torch import nn, optim
-# from torch.autograd import Variable
-# from torch.nn import functional as F
-
-# # from memory import Transition
-# from model import DQN
-
-
-# class Agent():
-#   def __init__(self, args, env):
-#     self.action_size = env.action_space()
-#     self.batch_size = args.batch_size
-#     self.discount = args.discount
-#     self.norm_clip = args.norm_clip
-
-#     self.online_net = DQN(args.hidden_size, self.action_size)
-#     if args.model and os.path.isfile(args.model):
-#       self.online_net.load_state_dict(torch.load(args.model))
-#     self.online_net.train()
-
-#     self.target_net = DQN(args.hidden_size, self.action_size)
-#     self.update_target_net()
-#     self.target_net.eval()
-
-#     self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate)
-
-#   def act(self, state):
-#     with torch.no_grad():
-#       return (self.online_net(state.unsqueeze(0))).sum(2).argmax(1).item()
-#   def learn(self, mem):
-
-#     idxs, states, actions, rewards, next_states, nonterminals, weights = mem.sample(self.batch_size)
-
-#     Qs = self.online_net(states).gather(1, actions)  # Q(s_t, a_t; θpolicy)
-#     next_state_argmax_indices = self.online_net(next_states).max(1, keepdim=True)[1]  # Perform argmax action selection using policy network: argmax_a[Q(s_t+1, a; θpolicy)]
-#     Qns = Variable(torch.zeros(self.batch_size))  # Q(s_t+1, a) = 0 if s_t+1 is terminal
-#     Qns[nonterminals] = self.target_net(next_states).gather(1, next_state_argmax_indices)  # Q(s_t+1, argmax_a[Q(s_t+1, a; θpolicy)]; θtarget)
-#     Qns.volatile = False  # Remove volatile flag to prevent propagating it through loss
-#     target = rewards + (self.discount * Qns)  # Double-Q target: Y = r + γ.Q(s_t+1, argmax_a[Q(s_t+1, a; θpolicy)]; θtarget)
-
-#     loss = F.smooth_l1_loss(Qs, target)  # Huber loss on TD-error δ: δ = Y - Q(s_t, a_t)
-#     # TODO: TD-error clipping?
-#     self.online_net.zero_grad()
-#     loss.backward()
-#     nn.utils.clip_grad_norm(self.online_net.parameters(), self.norm_clip)  # Clamp gradients
-#     self.optimiser.step()
-
-#   def update_target_net(self):
-#     self.target_net.load_state_dict(self.online_net.state_dict())
-
-#   def save(self, path):
-#     torch.save(self.online_net.state_dict(), os.path.join(path, 'model.pth'))
-
-#   def evaluate_q(self, state):
-#     return self.online_net(state.unsqueeze(0)).max(1)[0].data[0]
-
-#   def train(self):
-#     self.online_net.train()
-
-#   def eval(self):
-#     self.online_net.eval()
