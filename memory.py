@@ -79,7 +79,6 @@ class SegmentTree():
   # Searches for values in sum tree and returns values, data indices and tree indices
   def find(self, values):
     indices = self._retrieve(np.zeros(values.shape, dtype=np.int32), values)
-    print("im out!")
     data_index = indices - self.tree_start
     return (self.sum_tree[indices], data_index, indices)  # Return values, data indices, tree indices
 
