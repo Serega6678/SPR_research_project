@@ -150,7 +150,8 @@ else:
     # if T % args.replay_frequency == 0:
       # dqn.reset_noise()  # Draw a new set of noisy weights
 
-    action = dqn.act_e_greedy(state)  
+    action = dqn.act_e_greedy(state) 
+    # action = dqn.act(state)  
     next_state, reward, done = env.step(action)  # Step
     if args.reward_clip > 0:
       reward = max(min(reward, args.reward_clip), -args.reward_clip)  # Clip rewards
@@ -173,9 +174,9 @@ else:
         if args.memory is not None:
           save_memory(mem, args.memory, args.disable_bzip_memory)
 
-      # # Update target network
-      # if T % args.target_update == 0:
-      #   dqn.update_target_net()
+      # Update target network
+      if T % args.target_update == 0:
+        dqn.update_target_net()
 
       # Checkpoint the network
       if (args.checkpoint_interval != 0) and (T % args.checkpoint_interval == 0):
