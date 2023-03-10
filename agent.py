@@ -19,6 +19,8 @@ class Agent():
     self.norm_clip = args.norm_clip
     self.learning_rate = args.learning_rate
 
+    np.random.seed(args.seed)
+
     self.online_net = DQN(args, self.action_space).to(device=args.device)
     if args.model:  # Load pretrained model if provided
       if os.path.isfile(args.model):
@@ -57,28 +59,26 @@ class Agent():
     idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
 
     q_vals = self.online_net(states, log=True) 
-    q_s_a = q_vals.gather(1, actions.unsqueeze(1)).squeeze(1)  # Q-value of taken action (Q(s_t, a_t)
+    q_s_a = q_vals.gather(1, actions.unsqueeze(1)).squeeze()  # Q-value of taken action (Q(s_t, a_t)
 
     with torch.no_grad():
 
-      next_q_vals = self.target_net(next_states).max(1)[0]
-      # next_q_vals = nonterminals * next_max_q
-      # print(f'next_q: {next_q_vals.shape}')
+      next_q_vals = self.online_net(next_states).max(1)[0]
 
       # Q-learning: Q_new = Q(s, a) + α[R + γmax_a'Q(s', a') - Q(s, a)]
-      q_s_a_prime = returns + (self.discount * next_q_vals)
+      q_s_a_prime = returns + (self.discount * next_q_vals) * nonterminals
 
       # print(q_s_a.shape)
       # print(q_s_a_prime.shape)
 
 
-    loss = nn.MSELoss()(q_s_a, q_s_a_prime)  # Cross-entropy loss (minimises DKL(m||p(s_t, a_t)))
+    loss = nn.MSELoss()(q_s_a, q_s_a_prime)
     self.online_net.zero_grad()
     (weights * loss).mean().backward()  # Backpropagate importance-weighted minibatch loss
     clip_grad_norm_(self.online_net.parameters(), self.norm_clip)  # Clip gradients by L2 norm
     self.optimiser.step()
 
-    mem.update_priorities(idxs, loss.detach().cpu().numpy())  # Update priorities of sampled transitions
+    # mem.update_priorities(idxs, loss.detach().cpu().numpy())  # Update priorities of sampled transitions
 
   def update_target_net(self):
     self.target_net.load_state_dict(self.online_net.state_dict())
@@ -86,10 +86,7 @@ class Agent():
   # Evaluates Q-value based on single state (no batch)
   def evaluate_q(self, state):
     with torch.no_grad():
-      test = (self.online_net(state.unsqueeze(0)))
-      print(f'RESULTS 1: {test.shape}')
-      # test = test.sum(2)
-      return (self.online_net(state.unsqueeze(0))).sum(2).max(1)[0].item()
+      return (self.online_net(state.unsqueeze(0))).max(1)[0].item()
 
   # Save model parameters on current device (don't move model between devices)
   def save(self, path, name='model.pth'):

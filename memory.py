@@ -102,6 +102,8 @@ class ReplayMemory():
     self.n_step_scaling = torch.tensor([self.discount ** i for i in range(self.n)], dtype=torch.float32, device=self.device)  # Discount-scaling vector for n-step returns
     self.transitions = SegmentTree(capacity)  # Store transitions in a wrap-around cyclic buffer within a sum tree for querying priorities
 
+    np.random.seed(args.seed)
+
   # Adds state and action at time t, reward and terminal at time t + 1
   def append(self, state, action, reward, terminal):
     state = state[-1].mul(255).to(dtype=torch.uint8, device=torch.device('cpu'))  # Only store last frame and discretise to save memory
@@ -151,7 +153,7 @@ class ReplayMemory():
     probs, idxs, tree_idxs, states, actions, returns, next_states, nonterminals = self._get_samples_from_segments(batch_size, p_total)  # Get batch of valid samples
     probs = probs / p_total  # Calculate normalised probabilities
     capacity = self.capacity if self.transitions.full else self.transitions.index
-    weights = (capacity * probs) ** -self.priority_weight  # Compute importance-sampling weights w
+    weights = (capacity * probs) # ** -self.priority_weight  # Compute importance-sampling weights w
     weights = torch.tensor(weights / weights.max(), dtype=torch.float32, device=self.device)  # Normalise by max importance-sampling weight from batch
     return tree_idxs, states, actions, returns, next_states, nonterminals, weights
 
