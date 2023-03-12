@@ -42,14 +42,14 @@ class Agent():
     for param in self.target_net.parameters():
       param.requires_grad = False
 
-    self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate, eps=args.adam_eps)
+    self.optimiser = optim.SGD(self.online_net.parameters(), lr=args.learning_rate)
 
   # Acts based on single state (no batch)
   def act(self, state):
     with torch.no_grad():
         q_values = self.online_net(state.unsqueeze(0))
-        return q_values.max(1)[1].item()
-
+        return q_values.argmax(1).item()
+    
   # Acts with an ε-greedy policy (used for evaluation only)
   def act_e_greedy(self, state, epsilon=0.001):  # High ε can reduce evaluation scores drastically
     return np.random.randint(0, self.action_space) if np.random.random() < epsilon else self.act(state)
@@ -59,18 +59,23 @@ class Agent():
     idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
 
     q_vals = self.online_net(states, log=True) 
-    q_s_a = q_vals.gather(1, actions.unsqueeze(1)).squeeze() * nonterminals  # Q-value of taken action (Q(s_t, a_t)
+    q_s_a = q_vals[range(self.batch_size), actions] # Q-value of taken action (Q(s_t, a_t) 
 
     with torch.no_grad():
+
       # Q-learning: Q_new = Q(s, a) + α[R + γmax_a'Q(s', a') - Q(s, a)]
-      next_q_vals = self.target_net(next_states).max(1)[0]
-      q_s_a_prime = returns + (self.discount * next_q_vals) * nonterminals
 
-      # print(q_s_a.shape)
-      # print(q_s_a_prime.shape)
+      next_q_vals = self.online_net(next_states) 
+      argmax_indices_ns = next_q_vals.argmax(1)  
+      
+      next_q_vals = self.target_net(next_states)  
+      q_s_a_prime = next_q_vals[range(self.batch_size), argmax_indices_ns]
+      q_s_a_prime = returns + (self.discount * q_s_a) * nonterminals
 
+      # # ORIGINALLY WHAT I HAD
+      # next_q_vals = self.target_net(next_states).argmax(1)
+      # q_s_a_prime = returns + (self.discount * next_q_vals) * nonterminals
 
-    # loss = nn.MSELoss()(q_s_a, q_s_a_prime)
     loss = (q_s_a - q_s_a_prime)**2
     self.online_net.zero_grad()
     (weights * loss).mean().backward()  # Backpropagate importance-weighted minibatch loss
