@@ -59,20 +59,19 @@ class Agent():
     idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
 
     q_vals = self.online_net(states, log=True) 
-    q_s_a = q_vals.gather(1, actions.unsqueeze(1)).squeeze()  # Q-value of taken action (Q(s_t, a_t)
+    q_s_a = q_vals.gather(1, actions.unsqueeze(1)).squeeze() * nonterminals  # Q-value of taken action (Q(s_t, a_t)
 
     with torch.no_grad():
-
-      next_q_vals = self.online_net(next_states).max(1)[0]
-
       # Q-learning: Q_new = Q(s, a) + α[R + γmax_a'Q(s', a') - Q(s, a)]
+      next_q_vals = self.target_net(next_states).max(1)[0]
       q_s_a_prime = returns + (self.discount * next_q_vals) * nonterminals
 
       # print(q_s_a.shape)
       # print(q_s_a_prime.shape)
 
 
-    loss = nn.MSELoss()(q_s_a, q_s_a_prime)
+    # loss = nn.MSELoss()(q_s_a, q_s_a_prime)
+    loss = (q_s_a - q_s_a_prime)**2
     self.online_net.zero_grad()
     (weights * loss).mean().backward()  # Backpropagate importance-weighted minibatch loss
     clip_grad_norm_(self.online_net.parameters(), self.norm_clip)  # Clip gradients by L2 norm

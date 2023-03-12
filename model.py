@@ -4,12 +4,15 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F, init
+import numpy as np
 
 class DQN(nn.Module):
   def __init__(self, args, action_space):
     super(DQN, self).__init__()
     self.atoms = args.atoms
     self.action_space = action_space
+
+    np.random.seed(args.seed)
 
     if args.architecture == 'canonical':
       self.convs = nn.Sequential(nn.Conv2d(args.history_length, 32, 8, stride=4, padding=0), nn.ReLU(),
