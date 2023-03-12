@@ -1,3 +1,16 @@
+
+*The following branch of the Rainbow repository implements a vanilla Deep Q-learning model with replay buffer.*
+
+To run the training and testing process, one should choose their desired command line arguments. Although multi-step is technically implemented, for vanilla DQN multi_step should be set to 1.
+
+An example of possible arguments to run this repository:
+
+```
+python main.py --target-update 2000 --T-max 10000 --learn-start 1600 --memory-capacity 100000 --replay-frequency 1 --architecture data-efficient --hidden-size 256 --evaluation-interval 10000 --seed 1
+```
+
+For further details on the original Rainbow Github repo please refer to the ```master``` branch or the text below. 
+
 Rainbow
 =======
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
